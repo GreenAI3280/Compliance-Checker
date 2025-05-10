@@ -1,1 +1,115 @@
+package com.example.compliance;
 
+import javax.annotation.PostConstruct;
+import javax.inject.Singleton;
+import javax.ws.rs.Consumes;
+import javax.ws.rs.POST;
+import javax.ws.rs.Path;
+import javax.ws.rs.Produces;
+import javax.ws.rs.core.MediaType;
+import org.kie.api.KieServices;
+import org.kie.api.builder.KieBuilder;
+import org.kie.api.builder.KieFileSystem;
+import org.kie.api.builder.ReleaseId;
+import org.kie.api.runtime.KieContainer;
+import org.kie.api.runtime.KieSession;
+
+import java.util.List;
+import java.util.ArrayList;
+
+@Path("/compliance")
+@Singleton
+public class ComplianceCheckerApp {
+    private KieSession kieSession;
+
+    @PostConstruct
+    public void init() {
+        KieServices ks = KieServices.Factory.get();
+        KieFileSystem kfs = ks.newKieFileSystem();
+        // Load rules from in-code DRL
+        kfs.write("src/main/resources/compliance.drl", RULES);
+        KieBuilder kb = ks.newKieBuilder(kfs);
+        kb.buildAll();
+        ReleaseId rid = ks.getRepository().getDefaultReleaseId();
+        KieContainer kc = ks.newKieContainer(rid);
+        kieSession = kc.newKieSession();
+    }
+
+    private static final String RULES = """
+package com.example.rules;
+
+import com.example.compliance.BuildingDesign;
+
+rule "Height Compliance"
+    when
+        $d : BuildingDesign(height > 50)
+    then
+        $d.getResults().add(new ComplianceResult("Height Compliance", false, "Height exceeds 50m"));
+end
+
+rule "Area Compliance"
+    when
+        $d : BuildingDesign(area < 1000)
+    then
+        $d.getResults().add(new ComplianceResult("Area Compliance", false, "Area below minimum 1000m^2"));
+end
+
+rule "Stories Compliance"
+    when
+        $d : BuildingDesign(stories > 10)
+    then
+        $d.getResults().add(new ComplianceResult("Stories Compliance", false, "Stories exceed 10"));
+end
+
+rule "Pass All"
+    when
+        $d : BuildingDesign(results.isEmpty())
+    then
+        $d.getResults().add(new ComplianceResult("General Compliance", true, "All checks passed"));
+end
+""";
+
+    @POST
+    @Path("/check")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    public List<ComplianceResult> check(BuildingDesign design) {
+        design.getResults().clear();
+        kieSession.insert(design);
+        kieSession.fireAllRules();
+        return design.getResults();
+    }
+}
+
+// DTO for incoming design data
+class BuildingDesign {
+    private double height;
+    private double area;
+    private int stories;
+    private List<ComplianceResult> results = new ArrayList<>();
+
+    public double getHeight() { return height; }
+    public void setHeight(double height) { this.height = height; }
+    public double getArea() { return area; }
+    public void setArea(double area) { this.area = area; }
+    public int getStories() { return stories; }
+    public void setStories(int stories) { this.stories = stories; }
+    public List<ComplianceResult> getResults() { return results; }
+}
+
+// DTO for rule evaluation results
+class ComplianceResult {
+    private String ruleName;
+    private boolean passed;
+    private String message;
+
+    public ComplianceResult() {}
+    public ComplianceResult(String ruleName, boolean passed, String message) {
+        this.ruleName = ruleName;
+        this.passed = passed;
+        this.message = message;
+    }
+    public String getRuleName() { return ruleName; }
+    public boolean isPassed() { return passed; }
+    public String getMessage() { return message; }
+}
